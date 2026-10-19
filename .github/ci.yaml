@@ -1,0 +1,51 @@
+name: build-and-update-config
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/eks-backend:${{ steps.vars.outputs.sha }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/eks-frontend:${{ steps.vars.outputs.sha }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: talhanawaz568/eks-3tier-configs
+          token: ${{ secrets.CONFIG_REPO_TOKEN }}
+          path: configs
+
+      - name: Update image tags in config repo
+        run: |
+          cd configs/k8s
+          SHA=${{ steps.vars.outputs.sha }}
+          sed -i "/name: .*\/eks-backend/{n;s/newTag:.*/newTag: ${SHA}/}" kustomization.yaml
+          sed -i "/name: .*\/eks-frontend/{n;s/newTag:.*/newTag: ${SHA}/}" kustomization.yaml
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git add .
+          git diff --cached --quiet || git commit -m "Deploy ${SHA}"
+          git push
+
